@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoryItem } from '@/lib/instagram';
 
-const IMAGE_DURATION_MS = 5000;
+const DEFAULT_IMAGE_DURATION_MS = 5000;
 
 function timeAgo(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -20,6 +20,7 @@ export function StoryViewer({
   handle,
   loop = false,
   fullBleed = false,
+  imageDurationMs = DEFAULT_IMAGE_DURATION_MS,
 }: {
   stories: StoryItem[];
   handle: string;
@@ -27,6 +28,8 @@ export function StoryViewer({
   loop?: boolean;
   /** Preenche o elemento pai (sem card/cantos arredondados/largura máxima) — pra tela cheia. */
   fullBleed?: boolean;
+  /** Quanto tempo (ms) cada imagem fica na tela antes de avançar — vídeos usam a duração real deles. */
+  imageDurationMs?: number;
 }) {
   const [index, setIndex] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -41,6 +44,7 @@ export function StoryViewer({
   const elapsedMsRef = useRef(0);
   const lastIndexRef = useRef(index);
 
+  /** Avança pro próximo — no último, volta pro primeiro se `loop`, senão fica parado ali. */
   function next() {
     setIndex((i) => {
       if (i < stories.length - 1) return i + 1;
@@ -54,6 +58,9 @@ export function StoryViewer({
 
   // Avança sozinho: imagem tem duração fixa (IMAGE_DURATION_MS), vídeo avança
   // pelo evento `onEnded` (progress vem do `onTimeUpdate` dele, não daqui).
+  // Usa `setInterval` em vez de `requestAnimationFrame` — navegadores
+  // embutidos de TV (ex.: Samsung Tizen) têm suporte fraco a rAF, que
+  // trava a barra sem nunca avançar; setInterval funciona nesses navegadores.
   useEffect(() => {
     if (lastIndexRef.current !== index) {
       lastIndexRef.current = index;
@@ -61,23 +68,19 @@ export function StoryViewer({
     }
     if (!current || current.mediaType === 'VIDEO' || paused) return;
 
-    const startedAt = performance.now() - elapsedMsRef.current;
-    let raf: number;
-    function tick(now: number) {
-      const elapsed = now - startedAt;
+    const startedAt = Date.now() - elapsedMsRef.current;
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
       elapsedMsRef.current = elapsed;
-      const pct = Math.min(1, elapsed / IMAGE_DURATION_MS);
+      const pct = Math.min(1, elapsed / imageDurationMs);
       setProgress(pct);
       if (pct >= 1) {
-        if (!isLast || loop) next();
-      } else {
-        raf = requestAnimationFrame(tick);
+        next();
       }
-    }
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    }, 100);
+    return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, current?.mediaType, paused, isLast, loop]);
+  }, [index, current?.mediaType, paused, isLast, loop, imageDurationMs]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -139,6 +142,14 @@ export function StoryViewer({
           key={current.id}
           src={current.mediaUrl}
           className="h-full w-full object-cover"
+          // opacity quase-100% (não 1) força o navegador a compor o vídeo na
+          // camada normal da página em vez de numa camada de hardware
+          // separada — em alguns navegadores de TV essa camada de hardware
+          // ignora a rotação CSS aplicada no restante da tela (ver
+          // RotatedFullscreen). Depois desse truque, o vídeo passou a herdar
+          // a rotação da página, mas ainda saía 180° invertido — por isso o
+          // rotate(180deg) extra aqui, só nele.
+          style={{ opacity: 0.999, transform: 'rotate(180deg)' }}
           autoPlay
           muted
           playsInline
@@ -147,13 +158,23 @@ export function StoryViewer({
             if (v.duration) setProgress(v.currentTime / v.duration);
           }}
           onEnded={() => {
-            if (!isLast || loop) next();
-            else setProgress(1);
+            if (isLast && !loop) setProgress(1);
+            else next();
+          }}
+          onError={() => {
+            next();
           }}
         />
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={current.mediaUrl} alt="" className="h-full w-full object-cover" />
+        <img
+          src={current.mediaUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => {
+            next();
+          }}
+        />
       )}
 
       {/* Zonas de toque: 30% esquerda = anterior, 70% direita = próximo (segura pausa) */}

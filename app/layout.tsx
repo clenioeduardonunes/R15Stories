@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Stories da academia",
-  description: "Stories do Instagram da academia, exibidos no site.",
+  title: "R15 Academia",
+  description: "Planos, horários de funcionamento e contato da R15 Academia.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

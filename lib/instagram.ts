@@ -15,7 +15,8 @@ export interface GetStoriesResult {
 interface RawStory {
   id: string;
   media_type: 'IMAGE' | 'VIDEO';
-  media_url: string;
+  media_url?: string;
+  thumbnail_url?: string;
   permalink?: string;
   timestamp: string;
 }
@@ -52,7 +53,7 @@ export async function getStories(): Promise<GetStoriesResult> {
 
   const url =
     `https://graph.facebook.com/${API_VERSION}/${businessAccountId}/stories` +
-    `?fields=id,media_type,media_url,permalink,timestamp&access_token=${accessToken}`;
+    `?fields=id,media_type,media_url,thumbnail_url,permalink,timestamp&access_token=${accessToken}`;
 
   try {
     // Stories ativos mudam ao longo do dia — 5min de cache é um meio-termo
@@ -67,13 +68,23 @@ export async function getStories(): Promise<GetStoriesResult> {
     }
 
     const rawStories: RawStory[] = data.data ?? [];
-    const stories: StoryItem[] = rawStories.map((item) => ({
-      id: item.id,
-      mediaType: item.media_type,
-      mediaUrl: item.media_url,
-      permalink: item.permalink,
-      timestamp: item.timestamp,
-    }));
+    // Vídeos com música licenciada do catálogo do Instagram não retornam
+    // `media_url` (restrição de direitos autorais da Meta, não tem como
+    // contornar) — nesses casos mostramos o `thumbnail_url` (capa do vídeo)
+    // como se fosse uma imagem, em vez de descartar o story inteiro.
+    const stories: StoryItem[] = rawStories
+      .filter((item) => item.media_url || item.thumbnail_url)
+      .map((item) => ({
+        id: item.id,
+        mediaType: item.media_url ? item.media_type : 'IMAGE',
+        mediaUrl: item.media_url ?? item.thumbnail_url!,
+        permalink: item.permalink,
+        timestamp: item.timestamp,
+      }))
+      // A API retorna do mais recente pro mais antigo — invertemos pra
+      // exibir na ordem em que foram postados, igual o viewer de stories
+      // de verdade do Instagram.
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     return { stories, source: 'instagram' };
   } catch (err) {
